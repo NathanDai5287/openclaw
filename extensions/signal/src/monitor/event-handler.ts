@@ -102,6 +102,11 @@ function resolveSignalInboundRoute(params: {
   });
 }
 
+/** How long a typing-start holds the inbound debounce open (bridges Signal's sparse typing refreshes, ~10-15s apart). */
+const SIGNAL_TYPING_HOLD_MS = 15_000;
+/** Default hard cap on how long typing can defer a pending batch, from buffer creation. */
+const SIGNAL_TYPING_MAX_HOLD_MS = 60_000;
+
 export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
   type SignalInboundEntry = {
     senderName: string;
@@ -186,6 +191,7 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
       ? `group:${entry.groupId}`
       : `signal:${entry.senderRecipient}`;
     const signalTo = normalizeSignalMessagingTarget(signalToRaw) ?? signalToRaw;
+    deps.outboundBuffer?.clearQueue(signalTo);
     const inboundHistory =
       entry.isGroup && historyKey && deps.historyLimit > 0
         ? createChannelHistoryWindow({ historyMap: deps.groupHistories }).buildInboundHistory({
@@ -301,17 +307,25 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
       humanDelay: resolveHumanDelayConfig(deps.cfg, route.agentId),
       typingCallbacks,
       deliver: async (payload, _info) => {
-        await deps.deliverReplies({
-          cfg: deps.cfg,
-          replies: [payload],
-          target: ctxPayload.To,
-          baseUrl: deps.baseUrl,
-          account: deps.account,
-          accountId: deps.accountId,
-          runtime: deps.runtime,
-          maxBytes: deps.mediaMaxBytes,
-          textLimit: deps.textLimit,
-        });
+        const target = ctxPayload.To;
+        const doDeliver = async () => {
+          await deps.deliverReplies({
+            cfg: deps.cfg,
+            replies: [payload],
+            target,
+            baseUrl: deps.baseUrl,
+            account: deps.account,
+            accountId: deps.accountId,
+            runtime: deps.runtime,
+            maxBytes: deps.mediaMaxBytes,
+            textLimit: deps.textLimit,
+          });
+        };
+        if (deps.outboundBuffer) {
+          await deps.outboundBuffer.enqueue(target, doDeliver, payload.text);
+        } else {
+          await doDeliver();
+        }
       },
       onError: (err, info) => {
         deps.runtime.error?.(danger(`signal ${info.kind} reply failed: ${String(err)}`));
@@ -408,52 +422,61 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
     });
   }
 
-  const { debouncer: inboundDebouncer } = createChannelInboundDebouncer<SignalInboundEntry>({
-    cfg: deps.cfg,
-    channel: "signal",
-    buildKey: (entry) => {
-      const conversationId = entry.isGroup ? (entry.groupId ?? "unknown") : entry.senderPeerId;
-      if (!conversationId || !entry.senderPeerId) {
-        return null;
-      }
-      return `signal:${deps.accountId}:${conversationId}:${entry.senderPeerId}`;
-    },
-    shouldDebounce: (entry) => {
-      return shouldDebounceTextInbound({
-        text: entry.bodyText,
-        cfg: deps.cfg,
-        hasMedia: Boolean(entry.mediaPath || entry.mediaType || entry.mediaPaths?.length),
-      });
-    },
-    onFlush: async (entries) => {
-      const last = entries.at(-1);
-      if (!last) {
-        return;
-      }
-      if (entries.length === 1) {
-        await handleSignalInboundMessage(last);
-        return;
-      }
-      const combinedText = entries
-        .map((entry) => entry.bodyText)
-        .filter(Boolean)
-        .join("\\n");
-      if (!combinedText.trim()) {
-        return;
-      }
-      await handleSignalInboundMessage({
-        ...last,
-        bodyText: combinedText,
-        mediaPath: undefined,
-        mediaType: undefined,
-        mediaPaths: undefined,
-        mediaTypes: undefined,
-      });
-    },
-    onError: (err) => {
-      deps.runtime.error?.(`signal debounce flush failed: ${String(err)}`);
-    },
-  });
+  const buildSignalDebounceKey = (params: {
+    conversationId?: string | null;
+    senderPeerId?: string | null;
+  }): string | null => {
+    if (!params.conversationId || !params.senderPeerId) {
+      return null;
+    }
+    return `signal:${deps.accountId}:${params.conversationId}:${params.senderPeerId}`;
+  };
+
+  const { debouncer: inboundDebouncer, debounceMs: inboundDebounceMs } =
+    createChannelInboundDebouncer<SignalInboundEntry>({
+      cfg: deps.cfg,
+      channel: "signal",
+      buildKey: (entry) =>
+        buildSignalDebounceKey({
+          conversationId: entry.isGroup ? (entry.groupId ?? "unknown") : entry.senderPeerId,
+          senderPeerId: entry.senderPeerId,
+        }),
+      shouldDebounce: (entry) => {
+        return shouldDebounceTextInbound({
+          text: entry.bodyText,
+          cfg: deps.cfg,
+          hasMedia: Boolean(entry.mediaPath || entry.mediaType || entry.mediaPaths?.length),
+        });
+      },
+      onFlush: async (entries) => {
+        const last = entries.at(-1);
+        if (!last) {
+          return;
+        }
+        if (entries.length === 1) {
+          await handleSignalInboundMessage(last);
+          return;
+        }
+        const combinedText = entries
+          .map((entry) => entry.bodyText)
+          .filter(Boolean)
+          .join("\\n");
+        if (!combinedText.trim()) {
+          return;
+        }
+        await handleSignalInboundMessage({
+          ...last,
+          bodyText: combinedText,
+          mediaPath: undefined,
+          mediaType: undefined,
+          mediaPaths: undefined,
+          mediaTypes: undefined,
+        });
+      },
+      onError: (err) => {
+        deps.runtime.error?.(`signal debounce flush failed: ${String(err)}`);
+      },
+    });
 
   async function handleReactionOnlyInbound(params: {
     envelope: SignalEnvelope;
@@ -584,6 +607,46 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
       (sender.kind === "phone" && normalizedAccount != null && sender.e164 === normalizedAccount) ||
       (sender.kind === "uuid" && deps.accountUuid != null && sender.raw === deps.accountUuid);
     if (isOwnMessage) {
+      return;
+    }
+
+    // Typing-aware debounce: while the sender is actively typing, hold an
+    // already-pending batch open so it flushes after they stop typing rather
+    // than a fixed time after their last sent message. Only extends an existing
+    // buffer (never starts one), and is capped so a stuck "typing" state cannot
+    // defer delivery indefinitely. No-op unless explicitly enabled.
+    if (envelope.typingMessage) {
+      const typingAction = envelope.typingMessage.action;
+      const typingPeerId = resolveSignalPeerId(sender);
+      const typingGroupId = envelope.typingMessage.groupId ?? undefined;
+      // Notify the outbound buffer unconditionally so it can hold queued replies
+      // while the peer is actively typing.
+      deps.outboundBuffer?.notifyTyping(typingGroupId ?? typingPeerId ?? "", typingAction ?? "");
+      if (
+        deps.typingAwareDebounce &&
+        (typingAction === "STARTED" || typingAction === "STOPPED") &&
+        inboundDebounceMs > 0
+      ) {
+        const typingKey = buildSignalDebounceKey({
+          conversationId: typingGroupId ?? typingPeerId,
+          senderPeerId: typingPeerId,
+        });
+        if (typingKey) {
+          // Signal sends typing-start sparsely (once on begin, refreshed only
+          // every ~10-15s), so a STARTED holds ~15s to bridge the gap until the
+          // next refresh. A STOPPED collapses back to the normal debounce window
+          // so the batch fires shortly after the sender actually stops.
+          const holdMs =
+            typingAction === "STARTED"
+              ? Math.max(inboundDebounceMs, SIGNAL_TYPING_HOLD_MS)
+              : inboundDebounceMs;
+          inboundDebouncer.extendKey(
+            typingKey,
+            holdMs,
+            deps.typingDebounceMaxHoldMs ?? SIGNAL_TYPING_MAX_HOLD_MS,
+          );
+        }
+      }
       return;
     }
 

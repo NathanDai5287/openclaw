@@ -1,4 +1,3 @@
-// Signal type declarations define plugin contracts.
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import type {
   DmPolicy,
@@ -9,6 +8,8 @@ import type { HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import type { SignalSender } from "../identity.js";
+// Signal type declarations define plugin contracts.
+import type { SignalOutboundBuffer } from "../outbound-buffer.js";
 
 export type SignalEnvelope = {
   sourceNumber?: string | null;
@@ -19,6 +20,13 @@ export type SignalEnvelope = {
   editMessage?: { dataMessage?: SignalDataMessage | null } | null;
   syncMessage?: unknown;
   reactionMessage?: SignalReactionMessage | null;
+  typingMessage?: SignalTypingMessage | null;
+};
+
+export type SignalTypingMessage = {
+  action?: "STARTED" | "STOPPED" | string | null;
+  timestamp?: number | null;
+  groupId?: string | null;
 };
 
 export type SignalMention = {
@@ -97,6 +105,11 @@ export type SignalEventHandlerDeps = {
   ignoreAttachments: boolean;
   sendReadReceipts: boolean;
   readReceiptsViaDaemon: boolean;
+  /** Hold the inbound debounce open while the sender is typing. Default false. */
+  typingAwareDebounce?: boolean;
+  /** Hard cap (ms) on typing-deferred batches, from buffer creation. Default 60000. */
+  typingDebounceMaxHoldMs?: number;
+  outboundBuffer?: SignalOutboundBuffer;
   fetchAttachment: (params: {
     baseUrl: string;
     account?: string;
