@@ -37,26 +37,6 @@ export type SignalAccountConfig = CommonChannelMessagingConfig & {
   ignoreAttachments?: boolean;
   ignoreStories?: boolean;
   sendReadReceipts?: boolean;
-  /**
-   * Hold the inbound debounce window open while the sender is actively typing
-   * (using Signal typing indicators), so a batched turn fires after they stop
-   * typing rather than a fixed time after their last sent message. Only applies
-   * when an inbound debounce is configured for Signal (`messages.inbound`).
-   * Default: false.
-   */
-  typingAwareDebounce?: boolean;
-  /**
-   * Hard cap (ms) on how long typing indicators can defer a pending batch,
-   * measured from when the batch first started buffering. Prevents a stuck
-   * "typing" state from blocking replies indefinitely. Default: 60000.
-   */
-  typingDebounceMaxHoldMs?: number;
-  /**
-   * Hold outbound replies while the recipient is actively typing, then flush
-   * them when typing stops. Prevents stale replies from being sent mid-conversation.
-   * Default: false.
-   */
-  outboundReorderBuffer?: boolean;
   /** Per-group overrides keyed by Signal group id (or "*"). */
   groups?: Record<string, SignalGroupConfig>;
   /** Outbound text chunk size (chars). Default: 4000. */

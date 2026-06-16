@@ -48,7 +48,6 @@ import type {
   SignalReactionMessage,
   SignalReactionTarget,
 } from "./monitor/event-handler.types.js";
-import { createSignalOutboundBuffer } from "./outbound-buffer.js";
 import { sendMessageSignal } from "./send.js";
 import { runSignalSseLoop } from "./sse-reconnect.js";
 
@@ -447,14 +446,6 @@ export async function monitorSignalProvider(opts: MonitorSignalOpts = {}): Promi
   const mediaMaxBytes = (opts.mediaMaxMb ?? accountInfo.config.mediaMaxMb ?? 8) * 1024 * 1024;
   const ignoreAttachments = opts.ignoreAttachments ?? accountInfo.config.ignoreAttachments ?? false;
   const sendReadReceipts = Boolean(opts.sendReadReceipts ?? accountInfo.config.sendReadReceipts);
-  const typingAwareDebounce = Boolean(accountInfo.config.typingAwareDebounce);
-  const typingDebounceMaxHoldMs = accountInfo.config.typingDebounceMaxHoldMs;
-  const outboundReorderBuffer = Boolean(accountInfo.config.outboundReorderBuffer);
-  const outboundBuffer = outboundReorderBuffer
-    ? createSignalOutboundBuffer({
-        log: (msg) => runtime.log?.(msg),
-      })
-    : undefined;
   const waitForTransportReadyFn = opts.waitForTransportReady ?? waitForTransportReady;
 
   const autoStart = opts.autoStart ?? accountInfo.config.autoStart ?? !accountInfo.config.httpUrl;
@@ -558,9 +549,6 @@ export async function monitorSignalProvider(opts: MonitorSignalOpts = {}): Promi
       ignoreAttachments,
       sendReadReceipts,
       readReceiptsViaDaemon,
-      typingAwareDebounce,
-      ...(typingDebounceMaxHoldMs !== undefined ? { typingDebounceMaxHoldMs } : {}),
-      ...(outboundBuffer !== undefined ? { outboundBuffer } : {}),
       fetchAttachment: (params) => fetchAttachment({ ...params, apiMode: configuredApiMode }),
       deliverReplies: (params) => deliverReplies({ ...params, cfg, chunkMode }),
       resolveSignalReactionTargets,

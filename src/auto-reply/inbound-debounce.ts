@@ -39,7 +39,6 @@ type DebounceBuffer<T> = {
   items: T[];
   timeout: ReturnType<typeof setTimeout> | null;
   debounceMs: number;
-  createdAtMs: number;
   releaseReady: () => void;
   readyReleased: boolean;
   task: Promise<void>;
@@ -210,39 +209,6 @@ export function createInboundDebouncer<T>(params: InboundDebounceCreateParams<T>
     buffer.timeout.unref?.();
   };
 
-  /**
-   * Re-arm an existing buffer's flush timer without adding an item — used to hold
-   * a pending batch open while a live signal (e.g. the sender is still typing)
-   * keeps arriving. The flush is pushed out by `holdMs`, but never beyond
-   * `maxHoldMs` measured from when the buffer was first created, so a stuck
-   * signal cannot defer delivery indefinitely. Returns false when no buffer is
-   * pending for the key (nothing to extend).
-   */
-  const extendKey = (key: string, holdMs?: number, maxHoldMs?: number): boolean => {
-    const buffer = buffers.get(key);
-    if (!buffer) {
-      return false;
-    }
-    const now = Date.now();
-    const hold =
-      typeof holdMs === "number" && Number.isFinite(holdMs)
-        ? Math.max(0, Math.trunc(holdMs))
-        : buffer.debounceMs;
-    const cap =
-      typeof maxHoldMs === "number" && Number.isFinite(maxHoldMs)
-        ? buffer.createdAtMs + Math.max(0, Math.trunc(maxHoldMs))
-        : Number.POSITIVE_INFINITY;
-    const ms = Math.max(0, Math.min(now + hold, cap) - now);
-    if (buffer.timeout) {
-      clearTimeout(buffer.timeout);
-    }
-    buffer.timeout = setTimeout(() => {
-      void flushBuffer(key, buffer);
-    }, ms);
-    buffer.timeout.unref?.();
-    return true;
-  };
-
   const canTrackKey = (key: string) => {
     if (buffers.has(key) || keyChains.has(key)) {
       return true;
@@ -315,7 +281,6 @@ export function createInboundDebouncer<T>(params: InboundDebounceCreateParams<T>
       items: [item],
       timeout: null,
       debounceMs,
-      createdAtMs: Date.now(),
       releaseReady: reservedTask.release,
       readyReleased: false,
       task: reservedTask.task,
@@ -324,5 +289,5 @@ export function createInboundDebouncer<T>(params: InboundDebounceCreateParams<T>
     scheduleFlush(key, buffer);
   };
 
-  return { enqueue, flushKey, cancelKey, extendKey };
+  return { enqueue, flushKey, cancelKey };
 }

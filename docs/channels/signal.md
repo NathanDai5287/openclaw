@@ -283,35 +283,6 @@ Groups:
 - **Read receipts**: when `channels.signal.sendReadReceipts` is true, OpenClaw forwards read receipts for allowed DMs.
 - Signal-cli does not expose read receipts for groups.
 
-## Typing-aware inbound debounce
-
-When an inbound debounce is configured (`messages.inbound`), OpenClaw batches a
-sender's rapid messages into one agent turn after a fixed quiet window measured
-from their **last sent message**. With `channels.signal.typingAwareDebounce: true`,
-OpenClaw instead keeps that window open while the sender is **actively typing**
-(using Signal typing indicators), so the batch flushes after they stop typing
-rather than mid-thought.
-
-```json5
-{
-  channels: { signal: { typingAwareDebounce: true } },
-  messages: { inbound: { byChannel: { signal: 5000 } } },
-}
-```
-
-Notes:
-
-- Only **extends** an already-pending batch; it never starts one. The first
-  message still arms the normal debounce timer; continued typing then holds it.
-- Signal sends typing-start sparsely (once when the sender begins, refreshed only
-  every ~10-15s), so each typing-start holds the flush ~15s to bridge the gap
-  until the next refresh. A typing-stop collapses back to the normal debounce
-  window so the batch fires shortly after the sender actually stops.
-- The hold is capped by `channels.signal.typingDebounceMaxHoldMs` (default
-  `60000`) measured from when the batch first started buffering, so a stuck
-  "typing" state can't defer delivery forever.
-- No effect when no inbound debounce is set for Signal, or when the flag is off.
-
 ## Reactions (message tool)
 
 - Use `message action=react` with `channel=signal`.
@@ -419,8 +390,6 @@ Provider options:
 - `channels.signal.ignoreAttachments`: skip attachment downloads.
 - `channels.signal.ignoreStories`: ignore stories from the daemon.
 - `channels.signal.sendReadReceipts`: forward read receipts.
-- `channels.signal.typingAwareDebounce`: hold the inbound debounce open while the sender is typing (default false). Requires an inbound debounce (`messages.inbound`).
-- `channels.signal.typingDebounceMaxHoldMs`: hard cap (ms) on typing-deferred batches, from buffer creation (default 60000).
 - `channels.signal.dmPolicy`: `pairing | allowlist | open | disabled` (default: pairing).
 - `channels.signal.allowFrom`: DM allowlist (E.164 or `uuid:<id>`). `open` requires `"*"`. Signal has no usernames; use phone/UUID ids.
 - `channels.signal.groupPolicy`: `open | allowlist | disabled` (default: allowlist).

@@ -397,68 +397,6 @@ describe("createInboundDebouncer", () => {
     vi.useRealTimers();
   });
 
-  it("extendKey holds a pending batch open and flushes after the extension", async () => {
-    vi.useFakeTimers();
-    const calls: Array<string[]> = [];
-
-    const debouncer = createInboundDebouncer<{ key: string; id: string }>({
-      debounceMs: 10,
-      buildKey: (item) => item.key,
-      onFlush: async (items) => {
-        calls.push(items.map((entry) => entry.id));
-      },
-    });
-
-    await debouncer.enqueue({ key: "a", id: "1" });
-    await vi.advanceTimersByTimeAsync(8);
-    expect(debouncer.extendKey("a", 10)).toBe(true);
-
-    // The original 10ms timer would have fired by now; the extension defers it.
-    await vi.advanceTimersByTimeAsync(8);
-    expect(calls).toEqual([]);
-
-    await vi.advanceTimersByTimeAsync(2);
-    expect(calls).toEqual([["1"]]);
-
-    vi.useRealTimers();
-  });
-
-  it("extendKey honors maxHoldMs measured from buffer creation", async () => {
-    vi.useFakeTimers();
-    const calls: Array<string[]> = [];
-
-    const debouncer = createInboundDebouncer<{ key: string; id: string }>({
-      debounceMs: 10,
-      buildKey: (item) => item.key,
-      onFlush: async (items) => {
-        calls.push(items.map((entry) => entry.id));
-      },
-    });
-
-    await debouncer.enqueue({ key: "a", id: "1" }); // created at T0
-    await vi.advanceTimersByTimeAsync(8); // T8
-    // Ask to hold 10ms more (would be T18) but cap is T0+15.
-    expect(debouncer.extendKey("a", 10, 15)).toBe(true);
-
-    await vi.advanceTimersByTimeAsync(6); // T14, still capped-pending
-    expect(calls).toEqual([]);
-
-    await vi.advanceTimersByTimeAsync(1); // T15, cap reached
-    expect(calls).toEqual([["1"]]);
-
-    vi.useRealTimers();
-  });
-
-  it("extendKey returns false when no batch is pending", () => {
-    const debouncer = createInboundDebouncer<{ key: string; id: string }>({
-      debounceMs: 10,
-      buildKey: (item) => item.key,
-      onFlush: async () => {},
-    });
-
-    expect(debouncer.extendKey("missing", 10)).toBe(false);
-  });
-
   it("reports buffered items when cancelling a key", async () => {
     vi.useFakeTimers();
     const calls: Array<string[]> = [];
