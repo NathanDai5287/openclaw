@@ -293,6 +293,78 @@ describe("reply turn admission", () => {
     active.complete();
   });
 
+  it("cancel-restart supersedes an uncommitted active visible run", async () => {
+    const active = createReplyOperation({
+      sessionKey: "agent:main:signal:dm:42",
+      sessionId: "active-session",
+      resetTriggered: false,
+    });
+    active.setPhase("running");
+    // Mirror production: cancelling the backend ends the in-flight run, which
+    // releases the session lane so the superseding turn can claim it.
+    active.attachBackend({
+      kind: "cli",
+      cancel: () => active.complete(),
+      isStreaming: () => true,
+      isCommitted: () => false,
+    });
+    const abortSpy = vi.spyOn(active, "abortForRestart");
+
+    const admitted = admitReplyTurn({
+      sessionKey: "agent:main:signal:dm:42",
+      sessionId: "new-session",
+      kind: "visible",
+      resetTriggered: false,
+      restartActive: true,
+    });
+
+    const result = await admitted;
+    expect(abortSpy).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("owned");
+    if (result.status === "owned") {
+      result.operation.complete();
+    }
+  });
+
+  it("does not cancel-restart a committed active visible run", async () => {
+    const active = createReplyOperation({
+      sessionKey: "agent:main:signal:dm:43",
+      sessionId: "active-session",
+      resetTriggered: false,
+    });
+    active.setPhase("running");
+    active.attachBackend({
+      kind: "cli",
+      cancel: () => {},
+      isStreaming: () => true,
+      isCommitted: () => true,
+    });
+    const abortSpy = vi.spyOn(active, "abortForRestart");
+
+    const admitted = admitReplyTurn({
+      sessionKey: "agent:main:signal:dm:43",
+      sessionId: "new-session",
+      kind: "visible",
+      resetTriggered: false,
+      restartActive: true,
+    });
+
+    let settled = false;
+    void admitted.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(abortSpy).not.toHaveBeenCalled();
+
+    active.complete();
+    const result = await admitted;
+    expect(result.status).toBe("owned");
+    if (result.status === "owned") {
+      result.operation.complete();
+    }
+  });
+
   it("stops waiting when the caller aborts", async () => {
     const active = createReplyOperation({
       sessionKey: "agent:main:telegram:topic:42",

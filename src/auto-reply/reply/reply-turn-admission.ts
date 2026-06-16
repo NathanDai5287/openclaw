@@ -35,6 +35,7 @@ export async function admitReplyTurn(params: {
   upstreamAbortSignal?: AbortSignal;
   waitTimeoutMs?: number;
   waitForActive?: boolean;
+  restartActive?: boolean;
 }): Promise<ReplyTurnAdmission> {
   let sessionId = params.sessionId;
   const waitTimeoutMs =
@@ -86,6 +87,17 @@ export async function admitReplyTurn(params: {
       // Visible and queued turns may wait for active runs; control turns must stay immediate.
       if (params.waitForActive === false) {
         return { status: "skipped", reason: "active-run", activeOperation };
+      }
+      // Cancel-restart: a fresh visible turn supersedes an in-flight one rather than
+      // queueing behind it, but only while that turn has not committed a side effect
+      // (no tool has executed yet). Otherwise fall through and wait as usual.
+      if (
+        params.restartActive &&
+        params.kind === "visible" &&
+        activeOperation &&
+        !replyRunRegistry.isCommitted(params.sessionKey)
+      ) {
+        activeOperation.abortForRestart();
       }
       const ended = await replyRunRegistry.waitForIdle(params.sessionKey, waitTimeoutMs, {
         signal: params.upstreamAbortSignal,

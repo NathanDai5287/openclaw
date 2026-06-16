@@ -46,6 +46,14 @@ export type InboundDebounceByProvider = Record<string, number>;
 export type InboundDebounceConfig = {
   debounceMs?: number;
   byChannel?: InboundDebounceByProvider;
+  /**
+   * When true, a fresh visible turn that arrives while a reply run is still in
+   * flight for the same session cancels the running turn and restarts with the
+   * newest context, instead of queueing behind it. The restart is skipped once
+   * the running turn has committed a side effect (a tool has executed), so an
+   * already-sent email or message is never abandoned mid-flight. Default: false.
+   */
+  cancelRestart?: boolean;
 };
 
 export type BroadcastStrategy = "parallel" | "sequential";

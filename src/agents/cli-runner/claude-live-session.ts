@@ -1349,12 +1349,19 @@ export async function runClaudeLiveSessionTurn(params: {
   liveSession.noOutputTimeoutMs = params.noOutputTimeoutMs;
   liveSession.stderr = "";
 
+  // A turn is "committed" once it starts a tool call: cancel-restart must not
+  // abort a turn that may have already produced a side effect (e.g. sent mail).
+  let turnCommitted = false;
+  const onToolUseStart = (delta: CliToolUseStartDelta) => {
+    turnCommitted = true;
+    params.onToolUseStart?.(delta);
+  };
   const outputPromise = new Promise<CliOutput>((resolve, reject) => {
     liveSession.currentTurn = createTurn({
       context: params.context,
       noOutputTimeoutMs: params.noOutputTimeoutMs,
       onAssistantDelta: params.onAssistantDelta,
-      onToolUseStart: params.onToolUseStart,
+      onToolUseStart,
       onToolResult: params.onToolResult,
       onCommentaryText: params.onCommentaryText,
       session: liveSession,
@@ -1370,6 +1377,7 @@ export async function runClaudeLiveSessionTurn(params: {
         kind: "cli",
         cancel: abort,
         isStreaming: () => !replyBackendCompleted,
+        isCommitted: () => turnCommitted,
       }
     : undefined;
   params.context.params.abortSignal?.addEventListener("abort", abort, { once: true });

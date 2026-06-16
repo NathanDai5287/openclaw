@@ -113,6 +113,7 @@ import {
   resolveTextCommand,
 } from "../commands-registry.js";
 import type { BlockReplyContext, GetReplyOptions } from "../get-reply-options.types.js";
+import { resolveInboundCancelRestart } from "../inbound-debounce.js";
 import {
   copyReplyPayloadMetadata,
   getReplyPayloadMetadata,
@@ -1361,6 +1362,7 @@ export async function dispatchReplyFromConfig(
       routeThreadId,
       upstreamAbortSignal: params.replyOptions?.abortSignal,
       waitForActive: !allowActivePreDispatch && !allowSlackRoutedThreadBypass,
+      restartActive: replyTurnKind === "visible" && resolveInboundCancelRestart(cfg),
       ...(shouldRecoverStaleVisibleOperation ? { waitTimeoutMs: visibleReplyRecoveryWaitMs } : {}),
     });
     if (shouldRecoverStaleVisibleOperation) {

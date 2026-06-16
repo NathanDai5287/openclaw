@@ -19,6 +19,14 @@ export type ReplyBackendHandle = {
   readonly kind: ReplyBackendKind;
   cancel(reason?: ReplyBackendCancelReason): void;
   isStreaming(): boolean;
+  /**
+   * Reports whether the turn has committed an externally visible side effect
+   * (e.g. a tool has executed). Cancel-restart admission consults this so a
+   * running turn that may have already acted is never cancelled out from under
+   * its side effects. Absent means "no commit tracking" (treated as committed
+   * is unsafe, so absence is treated as not committed by the registry).
+   */
+  isCommitted?: () => boolean;
   queueMessage?: (text: string) => Promise<void>;
   /**
    * Compatibility-only hook so legacy "abort compacting runs" paths can still
@@ -97,6 +105,7 @@ export type ReplyRunRegistry = {
   get(sessionKey: string): ReplyOperation | undefined;
   isActive(sessionKey: string): boolean;
   isStreaming(sessionKey: string): boolean;
+  isCommitted(sessionKey: string): boolean;
   abort(sessionKey: string): boolean;
   waitForIdle(
     sessionKey: string,
@@ -613,6 +622,13 @@ export const replyRunRegistry: ReplyRunRegistry = {
       return false;
     }
     return getAttachedBackend(operation)?.isStreaming() ?? false;
+  },
+  isCommitted(sessionKey) {
+    const operation = this.get(sessionKey);
+    if (!operation || operation.phase !== "running") {
+      return false;
+    }
+    return getAttachedBackend(operation)?.isCommitted?.() ?? false;
   },
   abort(sessionKey) {
     const operation = this.get(sessionKey);
